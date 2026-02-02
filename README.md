@@ -34,6 +34,9 @@ cargo build --release
 ```
 
 ## Run
+The program can run in job-folder mode or direct file mode.
+
+### Job-folder mode (compatible with original layout)
 The program expects an input PDB named `errat.pdb` inside a job folder. Use `ERRAT_JOBS_PATH` to point to the base directory of job folders.
 
 ```bash
@@ -50,8 +53,17 @@ Outputs:
 - `<job>/errat.logf`
 - `<job>/errat.ps`
 
+### Direct file mode (CLI tool)
+```bash
+errat --input /path/to/input.pdb --out-dir /path/to/output --protein-id <ProteinID>
+```
+
+Outputs:
+- `<out-dir>/errat.logf`
+- `<out-dir>/errat.ps`
+
 ## Environment variable
-- `ERRAT_JOBS_PATH`: base directory containing job folders. Default: `/var/www/Jobs/`.
+- `ERRAT_JOBS_PATH`: base directory containing job folders. Default: `./outputs`.
 
 ## Tests
 ```bash

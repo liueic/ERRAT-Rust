@@ -34,6 +34,9 @@ cargo build --release
 ```
 
 ## 运行
+支持作业目录模式与直接文件模式。
+
+### 作业目录模式（兼容原始布局）
 程序会在作业目录中读取名为 `errat.pdb` 的输入文件。通过 `ERRAT_JOBS_PATH` 指定作业目录的根路径。
 
 ```bash
@@ -50,8 +53,17 @@ ERRAT_JOBS_PATH=/path/to/jobs \
 - `<job>/errat.logf`
 - `<job>/errat.ps`
 
+### 直接文件模式（CLI 工具）
+```bash
+errat --input /path/to/input.pdb --out-dir /path/to/output --protein-id <ProteinID>
+```
+
+输出文件：
+- `<out-dir>/errat.logf`
+- `<out-dir>/errat.ps`
+
 ## 环境变量
-- `ERRAT_JOBS_PATH`：作业目录根路径，默认 `/var/www/Jobs/`。
+- `ERRAT_JOBS_PATH`：作业目录根路径，默认 `./outputs`。
 
 ## 测试
 ```bash

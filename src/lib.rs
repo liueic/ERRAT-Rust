@@ -18,6 +18,8 @@ pub struct Config {
     pub file_string: String,
     pub job_id: String,
     pub base_path: PathBuf,
+    pub input_pdb: Option<PathBuf>,
+    pub output_dir: Option<PathBuf>,
 }
 
 #[derive(Clone, Debug)]
@@ -55,12 +57,17 @@ pub fn default_base_path() -> PathBuf {
     if let Ok(val) = std::env::var("ERRAT_JOBS_PATH") {
         PathBuf::from(val)
     } else {
-        PathBuf::from("/var/www/Jobs/")
+        std::env::current_dir()
+            .unwrap_or_else(|_| PathBuf::from("."))
+            .join("outputs")
     }
 }
 
 pub fn run(config: Config) -> io::Result<()> {
     let paths = resolve_paths(&config);
+    if let Some(parent) = paths.logf.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
 
     let logf = File::create(&paths.logf)?;
     let mut logw = BufWriter::new(logf);
@@ -84,6 +91,18 @@ pub fn run(config: Config) -> io::Result<()> {
 }
 
 fn resolve_paths(config: &Config) -> Paths {
+    if let (Some(input_pdb), Some(output_dir)) = (&config.input_pdb, &config.output_dir) {
+        let mut logf = output_dir.clone();
+        logf.push("errat.logf");
+        let mut ps = output_dir.clone();
+        ps.push("errat.ps");
+        return Paths {
+            pdb: input_pdb.clone(),
+            logf,
+            ps,
+        };
+    }
+
     let mut base = config.base_path.clone();
     base.push(&config.job_id);
 
