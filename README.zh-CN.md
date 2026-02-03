@@ -68,7 +68,8 @@ errat --input /path/to/input.pdb --out-dir /path/to/output
 - `<out-dir>/<input-stem>.ps`
 
 说明：
-- 若省略 `--protein-id`，默认使用输入文件名（去掉 `.pdb`）。
+- `--input` 支持 `.pdb`、`.cif`、`.mmcif`。
+- 若省略 `--protein-id`，默认使用输入文件名（去掉扩展名）。
 
 ## 环境变量
 - `ERRAT_JOBS_PATH`：作业目录根路径，默认 `./outputs`。

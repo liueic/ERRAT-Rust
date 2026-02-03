@@ -3,7 +3,7 @@ use std::path::PathBuf;
 
 fn print_usage() {
     eprintln!(
-        "\nUsage:\n  errat <ProteinID> <JobID>\n  errat --input <pdb> --out-dir <dir> --protein-id <id>\n\nEnvironment:\n  ERRAT_JOBS_PATH   base directory for job folders (default: ./outputs)\n"
+        "\nUsage:\n  errat <ProteinID> <JobID>\n  errat --input <pdb|cif> --out-dir <dir> --protein-id <id>\n\nEnvironment:\n  ERRAT_JOBS_PATH   base directory for job folders (default: ./outputs)\n"
     );
 }
 

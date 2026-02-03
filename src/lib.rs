@@ -1,5 +1,5 @@
 use std::fs::File;
-use std::io::{self, BufRead, BufReader, BufWriter, Write};
+use std::io::{self, BufRead, BufReader, BufWriter, Read, Write};
 use std::path::PathBuf;
 use rayon::prelude::*;
 
@@ -78,7 +78,7 @@ pub fn run(config: Config) -> io::Result<()> {
     let pdbf = File::open(&paths.pdb)?;
     let mut pdb_reader = BufReader::new(pdbf);
 
-    let atom_data = parse_pdb(&mut pdb_reader, &mut logw)?;
+    let atom_data = parse_structure(&paths.pdb, &mut pdb_reader, &mut logw)?;
     let stats = compute_errat(&atom_data, &mut logw)?;
 
     if stats.stat > 0.0 {
@@ -88,6 +88,23 @@ pub fn run(config: Config) -> io::Result<()> {
     logw.flush()?;
     psw.flush()?;
     Ok(())
+}
+
+fn parse_structure<R: BufRead, W: Write>(
+    path: &PathBuf,
+    reader: &mut R,
+    logw: &mut W,
+) -> io::Result<AtomData> {
+    let ext = path
+        .extension()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    if ext == "cif" || ext == "mmcif" {
+        parse_mmcif(reader, logw)
+    } else {
+        parse_pdb(reader, logw)
+    }
 }
 
 fn resolve_paths(config: &Config) -> Paths {
@@ -281,6 +298,329 @@ fn parse_pdb<R: BufRead, W: Write>(reader: &mut R, logw: &mut W) -> io::Result<A
         xyz_z,
         errat,
     })
+}
+
+fn parse_mmcif<R: Read, W: Write>(reader: &mut R, logw: &mut W) -> io::Result<AtomData> {
+    let mut name = vec![0i32; SIZE + 2];
+    let mut bnam = vec![0i32; SIZE + 2];
+    let mut chain_id = vec![b' '; SIZE + 2];
+    let mut res_seq = vec![0i32; SIZE + 2];
+    let mut resnum = vec![0i32; SIZE + 2];
+    let mut xyz_x = vec![0.0f64; SIZE + 2];
+    let mut xyz_y = vec![0.0f64; SIZE + 2];
+    let mut xyz_z = vec![0.0f64; SIZE + 2];
+    let mut errat = vec![0.0f64; SIZE + 8];
+
+    let mut input = String::new();
+    reader.read_to_string(&mut input)?;
+    let tokens = tokenize_cif(&input);
+
+    let mut i: usize = 0;
+    let mut atmnum: usize = 0;
+    let mut kadd: i32 = 0;
+    let mut flag = false;
+    let mut flag2 = false;
+
+    let mut idx = 0;
+    while idx < tokens.len() {
+        if tokens[idx] != "loop_" {
+            idx += 1;
+            continue;
+        }
+        idx += 1;
+        let mut cols = Vec::new();
+        while idx < tokens.len() && tokens[idx].starts_with('_') {
+            cols.push(tokens[idx].clone());
+            idx += 1;
+        }
+        if cols.is_empty() {
+            continue;
+        }
+
+        let is_atom_site = cols.iter().any(|c| c.starts_with("_atom_site."));
+        let col_count = cols.len();
+
+        if !is_atom_site {
+            while idx + col_count <= tokens.len() {
+                let t = &tokens[idx];
+                if t == "loop_"
+                    || t.starts_with('_')
+                    || t.starts_with("data_")
+                    || t.starts_with("save_")
+                    || t == "stop_"
+                {
+                    break;
+                }
+                idx += col_count;
+            }
+            continue;
+        }
+
+        let col_index = |name: &str| -> Option<usize> {
+            cols.iter().position(|c| {
+                if c == name {
+                    true
+                } else if name.starts_with("_atom_site.") {
+                    false
+                } else {
+                    c.ends_with(&format!(".{name}"))
+                }
+            })
+        };
+
+        let idx_group = col_index("group_PDB");
+        let idx_atom = col_index("label_atom_id");
+        let idx_type = col_index("type_symbol");
+        let idx_alt = col_index("label_alt_id");
+        let idx_res = col_index("label_comp_id");
+        let idx_chain = col_index("auth_asym_id").or_else(|| col_index("label_asym_id"));
+        let idx_seq = col_index("auth_seq_id").or_else(|| col_index("label_seq_id"));
+        let idx_x = col_index("Cartn_x");
+        let idx_y = col_index("Cartn_y");
+        let idx_z = col_index("Cartn_z");
+
+        if idx_atom.is_none() || idx_res.is_none() || idx_chain.is_none() || idx_seq.is_none() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "mmCIF missing required _atom_site columns",
+            ));
+        }
+        if idx_x.is_none() || idx_y.is_none() || idx_z.is_none() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "mmCIF missing coordinate columns",
+            ));
+        }
+
+        while idx + col_count <= tokens.len() {
+            let t = &tokens[idx];
+            if t == "loop_"
+                || t.starts_with('_')
+                || t.starts_with("data_")
+                || t.starts_with("save_")
+                || t == "stop_"
+            {
+                break;
+            }
+
+            let row = &tokens[idx..idx + col_count];
+            idx += col_count;
+
+            if let Some(g) = idx_group {
+                let group = row[g].as_str();
+                if group != "ATOM" {
+                    continue;
+                }
+            }
+
+            if i + 1 > SIZE - 1 {
+                writeln!(
+                    logw,
+                    "ERROR: PDB WITH TOO MANY ATOMS. CUT OFF FURTHER INPUT."
+                )?;
+                break;
+            }
+            i += 1;
+
+            let atom_name = row[idx_atom.unwrap()].as_str();
+            let element = idx_type
+                .and_then(|k| row.get(k))
+                .map(|s| s.as_str())
+                .unwrap_or(atom_name);
+            let element_char = element.chars().next().unwrap_or(' ');
+            name[i] = match element_char {
+                'C' | 'c' => 1,
+                'N' | 'n' => 2,
+                'O' | 'o' => 3,
+                _ => 0,
+            };
+            bnam[i] = if atom_name == "N" || atom_name == "C" { 1 } else { 0 };
+
+            let alt_loc = idx_alt
+                .and_then(|k| row.get(k))
+                .map(|s| s.as_str())
+                .unwrap_or(".");
+            let alt_loc_char = alt_loc.chars().next().unwrap_or(' ');
+            let alt_loc_char = match alt_loc_char {
+                '.' | '?' => ' ',
+                c => c,
+            };
+
+            let res_name_str = row[idx_res.unwrap()].as_str();
+            let res_name_upper = res_name_str.to_ascii_uppercase();
+            let res_name = res_name_upper.as_bytes();
+            let chain = row[idx_chain.unwrap()].as_bytes();
+            chain_id[i] = if chain.is_empty() { b' ' } else { chain[0] };
+
+            let res_seq_val = row[idx_seq.unwrap()].parse::<f64>().unwrap_or(0.0);
+            res_seq[i] = res_seq_val as i32;
+
+            xyz_x[i] = row[idx_x.unwrap()].parse::<f64>().unwrap_or(0.0);
+            xyz_y[i] = row[idx_y.unwrap()].parse::<f64>().unwrap_or(0.0);
+            xyz_z[i] = row[idx_z.unwrap()].parse::<f64>().unwrap_or(0.0);
+
+            if !(alt_loc_char == ' ' || alt_loc_char == 'A' || alt_loc_char == 'a' || alt_loc_char == 'P') {
+                writeln!(
+                    logw,
+                    "Reject 2' Conformation atom#\t{}\tchain\t{}",
+                    i,
+                    chain_id[i] as char
+                )?;
+                i -= 1;
+                flag = true;
+            }
+
+            if !is_standard_residue(res_name) {
+                i -= 1;
+                flag = true;
+                let res_name_str = std::str::from_utf8(res_name).unwrap_or("???");
+                writeln!(
+                    logw,
+                    "***Warning: Reject Nonstardard Residue - {}",
+                    res_name_str
+                )?;
+            }
+
+            if i >= 2 && !flag && chain_id[i] != chain_id[i - 1] {
+                kadd += 1;
+                writeln!(logw, "INCREMENTING CHAIN (kadd) {}", kadd)?;
+            }
+
+            if !flag {
+                resnum[i] = res_seq[i] + (kadd * CHAINDIF);
+                atmnum = i;
+            }
+
+            if i >= 2
+                && !flag
+                && chain_id[i] == chain_id[i - 1]
+                && resnum[i] < resnum[i - 1]
+            {
+                writeln!(
+                    logw,
+                    "ERROR: RESNUM DECREASE. TERMINATE ANALYSIS{}\t{}",
+                    resnum[i], resnum[i - 1]
+                )?;
+                flag2 = true;
+            }
+
+            if i > 2
+                && !flag
+                && chain_id[i] == chain_id[i - 1]
+                && resnum[i] != resnum[i - 1]
+                && (resnum[i] - resnum[i - 1]) > 1
+            {
+                writeln!(
+                    logw,
+                    "WARNING: Missing Residues{}>>>{}",
+                    resnum[i - 1], resnum[i]
+                )?;
+            }
+
+            if !flag {
+                let idx = (resnum[i] + 4) as usize;
+                if idx >= errat.len() {
+                    errat.resize(idx + 1, 0.0);
+                }
+                errat[idx] = 0.0;
+            }
+
+            flag = false;
+            if flag2 {
+                break;
+            }
+        }
+
+        if atmnum > 0 || flag2 {
+            break;
+        }
+    }
+
+    Ok(AtomData {
+        atmnum,
+        name,
+        bnam,
+        chain_id,
+        res_seq,
+        resnum,
+        xyz_x,
+        xyz_y,
+        xyz_z,
+        errat,
+    })
+}
+
+fn tokenize_cif(input: &str) -> Vec<String> {
+    let bytes = input.as_bytes();
+    let mut tokens = Vec::new();
+    let mut i = 0;
+    let mut at_line_start = true;
+
+    while i < bytes.len() {
+        let c = bytes[i] as char;
+        if c.is_whitespace() {
+            if c == '\n' {
+                at_line_start = true;
+            }
+            i += 1;
+            continue;
+        }
+
+        if c == '#' {
+            while i < bytes.len() && bytes[i] as char != '\n' {
+                i += 1;
+            }
+            at_line_start = true;
+            continue;
+        }
+
+        if c == ';' && at_line_start {
+            i += 1;
+            let start = i;
+            let mut end = None;
+            while i + 1 < bytes.len() {
+                if bytes[i] as char == '\n' && bytes[i + 1] as char == ';' {
+                    end = Some(i);
+                    break;
+                }
+                i += 1;
+            }
+            if let Some(end_pos) = end {
+                let val = &input[start..end_pos];
+                tokens.push(val.to_string());
+                i = end_pos + 2;
+                while i < bytes.len() && bytes[i] as char != '\n' {
+                    i += 1;
+                }
+                at_line_start = true;
+                continue;
+            }
+        }
+
+        if c == '\'' || c == '"' {
+            let quote = c;
+            i += 1;
+            let start = i;
+            while i < bytes.len() && bytes[i] as char != quote {
+                i += 1;
+            }
+            let val = &input[start..i];
+            tokens.push(val.to_string());
+            i += 1;
+            at_line_start = false;
+            continue;
+        }
+
+        let start = i;
+        while i < bytes.len() && !(bytes[i] as char).is_whitespace() {
+            i += 1;
+        }
+        let val = &input[start..i];
+        tokens.push(val.to_string());
+        at_line_start = false;
+    }
+
+    tokens
 }
 
 #[derive(Clone, Copy)]

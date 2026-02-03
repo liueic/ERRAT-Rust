@@ -68,7 +68,8 @@ Outputs:
 - `<out-dir>/<input-stem>.ps`
 
 Notes:
-- If `--protein-id` is omitted, it defaults to the input filename without `.pdb`.
+- `--input` supports `.pdb`, `.cif`, and `.mmcif`.
+- If `--protein-id` is omitted, it defaults to the input filename without the extension.
 
 ## Environment variable
 - `ERRAT_JOBS_PATH`: base directory containing job folders. Default: `./outputs`.
