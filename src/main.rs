@@ -7,7 +7,7 @@ use rayon::ThreadPoolBuilder;
 
 fn print_usage() {
     eprintln!(
-        "\nUsage:\n  errat <ProteinID> <JobID>\n  errat --input <pdb|cif> --out-dir <dir> [--protein-id <id>] [--mmap]\n  errat --input-dir <dir> --out-dir <dir> [--recursive] [--threads <n>] [--mmap]\n  errat --jobs-dir <dir> [--threads <n>] [--mmap]\n\nEnvironment:\n  ERRAT_JOBS_PATH   base directory for job folders (default: ./outputs)\n"
+        "\nUsage:\n  errat <ProteinID> <JobID>\n  errat --input <pdb|cif> --out-dir <dir> [--protein-id <id>] [--mmap] [--pdf]\n  errat --input-dir <dir> --out-dir <dir> [--recursive] [--threads <n>] [--mmap] [--pdf]\n  errat --jobs-dir <dir> [--threads <n>] [--mmap] [--pdf]\n\nEnvironment:\n  ERRAT_JOBS_PATH   base directory for job folders (default: ./outputs)\n"
     );
 }
 
@@ -89,6 +89,7 @@ fn main() {
     let mut recursive = false;
     let mut threads: Option<usize> = None;
     let mut use_mmap = false;
+    let mut output_pdf = false;
 
     let mut i = 1usize;
     while i < args.len() {
@@ -125,6 +126,9 @@ fn main() {
             }
             "--mmap" => {
                 use_mmap = true;
+            }
+            "--pdf" => {
+                output_pdf = true;
             }
             _ => {}
         }
@@ -176,6 +180,7 @@ fn main() {
                     input_pdb: None,
                     output_dir: None,
                     use_mmap,
+                    output_pdf,
                 },
             });
         }
@@ -250,6 +255,7 @@ fn main() {
                         input_pdb: Some(input_pdb),
                         output_dir: Some(output_dir.clone()),
                         use_mmap,
+                        output_pdf,
                     },
                 })
             })
@@ -286,6 +292,7 @@ fn main() {
             input_pdb: Some(input_pdb),
             output_dir: Some(output_dir),
             use_mmap,
+            output_pdf,
         }
     } else if args.len() == 3 {
         let file_string = args[1].clone();
@@ -297,6 +304,7 @@ fn main() {
             input_pdb: None,
             output_dir: None,
             use_mmap,
+            output_pdf,
         }
     } else {
         print_usage();

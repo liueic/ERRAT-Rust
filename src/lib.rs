@@ -1,4 +1,5 @@
 use std::fs::File;
+use std::fmt::Write as FmtWrite;
 use std::io::{self, BufRead, BufReader, BufWriter, Read, Write};
 use std::path::PathBuf;
 use memmap2::MmapOptions;
@@ -22,6 +23,7 @@ pub struct Config {
     pub input_pdb: Option<PathBuf>,
     pub output_dir: Option<PathBuf>,
     pub use_mmap: bool,
+    pub output_pdf: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -52,7 +54,7 @@ struct ErratStats {
 struct Paths {
     pdb: PathBuf,
     logf: PathBuf,
-    ps: PathBuf,
+    plot: PathBuf,
 }
 
 pub fn default_base_path() -> PathBuf {
@@ -74,18 +76,22 @@ pub fn run(config: Config) -> io::Result<()> {
     let logf = File::create(&paths.logf)?;
     let mut logw = BufWriter::new(logf);
 
-    let psf = File::create(&paths.ps)?;
-    let mut psw = BufWriter::new(psf);
+    let plotf = File::create(&paths.plot)?;
+    let mut plotw = BufWriter::new(plotf);
 
     let atom_data = parse_structure(&paths.pdb, &mut logw, config.use_mmap)?;
     let stats = compute_errat(&atom_data, &mut logw)?;
 
     if stats.stat > 0.0 {
-        write_ps(&mut psw, &mut logw, &config.file_string, &stats)?;
+        if config.output_pdf {
+            write_pdf(&mut plotw, &mut logw, &config.file_string, &stats)?;
+        } else {
+            write_ps(&mut plotw, &mut logw, &config.file_string, &stats)?;
+        }
     }
 
     logw.flush()?;
-    psw.flush()?;
+    plotw.flush()?;
     Ok(())
 }
 
@@ -294,12 +300,16 @@ fn resolve_paths(config: &Config) -> Paths {
             .unwrap_or("errat");
         let mut logf = output_dir.clone();
         logf.push(format!("{base_name}.logf"));
-        let mut ps = output_dir.clone();
-        ps.push(format!("{base_name}.ps"));
+        let mut plot = output_dir.clone();
+        if config.output_pdf {
+            plot.push(format!("{base_name}.pdf"));
+        } else {
+            plot.push(format!("{base_name}.ps"));
+        }
         return Paths {
             pdb: input_pdb.clone(),
             logf,
-            ps,
+            plot,
         };
     }
 
@@ -312,10 +322,14 @@ fn resolve_paths(config: &Config) -> Paths {
     let mut logf = base.clone();
     logf.push("errat.logf");
 
-    let mut ps = base.clone();
-    ps.push("errat.ps");
+    let mut plot = base.clone();
+    if config.output_pdf {
+        plot.push("errat.pdf");
+    } else {
+        plot.push("errat.ps");
+    }
 
-    Paths { pdb, logf, ps }
+    Paths { pdb, logf, plot }
 }
 
 fn parse_pdb<R: BufRead, W: Write>(reader: &mut R, logw: &mut W) -> io::Result<AtomData> {
@@ -1293,6 +1307,382 @@ fn write_ps<P: Write, L: Write>(
     Ok(())
 }
 
+fn write_pdf<P: Write, L: Write>(
+    pdfw: &mut P,
+    logw: &mut L,
+    file_string: &str,
+    stats: &ErratStats,
+) -> io::Result<()> {
+    let pages = build_pdf_pages(logw, file_string, stats)?;
+    let pdf = build_pdf_document(&pages);
+    pdfw.write_all(&pdf)?;
+    Ok(())
+}
+
+fn build_pdf_pages<L: Write>(
+    logw: &mut L,
+    file_string: &str,
+    stats: &ErratStats,
+) -> io::Result<Vec<Vec<u8>>> {
+    let mut ir1 = [0i32; 100];
+    let mut ir2 = [0i32; 100];
+    let mut id_by_chain = [b' '; 100];
+
+    let chainx = 1 + (stats.resnum[stats.atmnum] - 4) / CHAINDIF;
+
+    let mut z2 = 1;
+    ir1[z2] = stats.resnum[1] + 4;
+    ir2[z2] = 0;
+    id_by_chain[z2] = stats.chain_id[1];
+    println!(
+        "atn, chain#, chainID 1  {}  {}",
+        z2,
+        id_by_chain[z2] as char
+    );
+
+    for z1 in 1..stats.atmnum {
+        if z1 == stats.atmnum - 1 {
+            ir2[z2] = stats.resnum[stats.atmnum] - 4;
+        } else if stats.chain_id[z1] != stats.chain_id[z1 + 1] && stats.resnum[z1] > 4 {
+            ir2[z2] = stats.resnum[z1] - 4;
+            z2 += 1;
+            ir1[z2] = stats.resnum[z1 + 1] + 4;
+            id_by_chain[z2] = stats.chain_id[z1 + 1];
+        }
+    }
+
+    let mut mst = 0.0f64;
+    for ich in 1..=chainx as usize {
+        let mut ms = (ir2[ich] - ir1[ich] + 1) as f64 / (300.0 + 1.0);
+        ms = (ir2[ich] - ir1[ich] + 1) as f64 / ms;
+        if ms > mst {
+            mst = ms;
+        }
+        if mst < 200.0 {
+            mst = 200.0;
+        }
+    }
+
+    let sz = 200.0 / mst;
+    let mut pages = Vec::new();
+
+    for ich in 1..=chainx as usize {
+        let np = 1 + ((ir2[ich] - ir1[ich] + 1) as f64 / mst) as i32;
+        for z1 in 1..=np {
+            let ir0 = ir1[ich] + (mst as i32) * (z1 - 1);
+            let mut ir = ir0 + (mst as i32) - 1;
+            if ir > ir2[ich] {
+                ir = ir2[ich];
+            }
+
+            let overall_quality = 100.0 - (100.0 * stats.pstat / stats.stat);
+
+            writeln!(
+                logw,
+                "# Chain Label {}:    Residue range {} to {}",
+                id_by_chain[ich] as char,
+                ir0,
+                ir
+            )?;
+
+            let mut page = Vec::new();
+            write_pdf_page(
+                &mut page,
+                file_string,
+                stats,
+                ir0,
+                ir,
+                id_by_chain[ich],
+                overall_quality,
+                sz,
+            );
+            pages.push(page);
+        }
+    }
+
+    Ok(pages)
+}
+
+fn write_pdf_page(
+    buf: &mut Vec<u8>,
+    file_string: &str,
+    stats: &ErratStats,
+    ir0: i32,
+    ir: i32,
+    chain_id: u8,
+    overall_quality: f64,
+    sz: f64,
+) {
+    let scr = 3.0;
+    let sce = 8.0;
+    let e95 = 11.527;
+    let e99 = 17.191;
+    let rlim = (ir - ir0 + 1) as f64;
+
+    let _ = write!(
+        buf,
+        "q\n0 1 -1 0 0 0 cm\n1 0 0 1 110 -380 cm\n{:.3} 0 0 {:.3} 0 0 cm\n0.5 w\n0 0 0 RG\n0 0 0 rg\n",
+        sz, sz
+    );
+
+    let header_y = 30.0 * sce + 20.0;
+    pdf_text(
+        buf,
+        0.0,
+        header_y + 30.0,
+        18.0,
+        &format!("Chain#:{}", chain_id as char),
+    );
+    pdf_text(
+        buf,
+        0.0,
+        header_y + 50.0,
+        18.0,
+        &format!("File: {}", file_string),
+    );
+    pdf_text(
+        buf,
+        0.0,
+        header_y + 10.0,
+        18.0,
+        &format!("Overall quality factor**: {:.3}", overall_quality),
+    );
+    pdf_text(buf, 0.0, header_y + 70.0, 18.0, "Program: ERRAT2");
+
+    pdf_line(buf, 0.0, 0.0, 0.0, 27.0 * sce);
+    pdf_line(buf, rlim * scr, 0.0, rlim * scr, 27.0 * sce);
+    pdf_line(buf, 0.0, 0.0, rlim * scr, 0.0);
+    pdf_line(
+        buf,
+        -3.0,
+        e95 * sce,
+        rlim * scr + 3.0,
+        e95 * sce,
+    );
+    pdf_line(
+        buf,
+        -3.0,
+        e99 * sce,
+        rlim * scr + 3.0,
+        e99 * sce,
+    );
+    pdf_line(
+        buf,
+        0.0,
+        27.0 * sce,
+        rlim * scr,
+        27.0 * sce,
+    );
+
+    pdf_text(
+        buf,
+        rlim * scr / 2.0 - 100.0,
+        -34.0,
+        18.0,
+        "Residue # (window center)",
+    );
+    pdf_text(buf, -34.0, e95 * sce - 4.0, 14.0, "95%");
+    pdf_text(buf, -34.0, e99 * sce - 4.0, 14.0, "99%");
+
+    pdf_text(
+        buf,
+        0.0,
+        -70.0,
+        12.0,
+        "*On the error axis, two lines are drawn to indicate the confidence with",
+    );
+    pdf_text(
+        buf,
+        0.0,
+        -82.0,
+        12.0,
+        "which it is possible to reject regions that exceed that error value.",
+    );
+    pdf_text(
+        buf,
+        0.0,
+        -100.0,
+        12.0,
+        "**Expressed as the percentage of the protein for which the calculated",
+    );
+    pdf_text(
+        buf,
+        0.0,
+        -112.0,
+        12.0,
+        "error value falls below the 95% rejection limit.  Good high resolution",
+    );
+    pdf_text(
+        buf,
+        0.0,
+        -124.0,
+        12.0,
+        "structures generally produce values around 95% or higher.  For lower",
+    );
+    pdf_text(
+        buf,
+        0.0,
+        -136.0,
+        12.0,
+        "resolutions (2.5 to 3A) the average overall quality factor is around 91%. )",
+    );
+
+    let _ = write!(buf, "q 0 1 -1 0 -40 -5 cm\n");
+    pdf_text(buf, 80.0, 0.0, 18.0, "Error value*");
+    let _ = write!(buf, "Q\n");
+
+    for z2 in ir0..=ir {
+        let x = (z2 - ir0 + 1) as f64;
+        if z2 % 20 == 0 {
+            let tick_x = (x - 0.5) * scr;
+            pdf_line(buf, tick_x, 0.0, tick_x, -3.0);
+            let label = z2 - (CHAINDIF * (z2 / CHAINDIF));
+            pdf_text(buf, tick_x - 10.0, -15.0, 16.0, &label.to_string());
+        } else if z2 % 10 == 0 {
+            let tick_x = (x - 0.5) * scr;
+            pdf_line(buf, tick_x, 0.0, tick_x, -3.0);
+        }
+    }
+
+    for z2 in ir0..=ir {
+        let mut bar = 1;
+        if stats.errat[z2 as usize] > LMT_95 {
+            bar = 2;
+        }
+        if stats.errat[z2 as usize] > LMT_99 {
+            bar = 3;
+        }
+        let mut val = stats.errat[z2 as usize];
+        if val > 27.0 {
+            val = 27.0;
+        }
+        let x = (z2 - ir0 + 1) as f64 * scr;
+        let y = val * sce;
+        match bar {
+            1 => pdf_set_fill_rgb(buf, 1.0, 1.0, 1.0),
+            2 => pdf_set_fill_rgb(buf, 1.0, 1.0, 0.0),
+            _ => pdf_set_fill_rgb(buf, 1.0, 0.0, 0.0),
+        }
+        pdf_rect_fill_stroke(buf, x - scr, 0.0, scr, y);
+    }
+
+    let _ = write!(buf, "Q\n");
+}
+
+fn build_pdf_document(pages: &[Vec<u8>]) -> Vec<u8> {
+    let page_count = pages.len();
+    let total_objects = 3 + page_count * 2;
+    let mut buf = Vec::new();
+    let mut offsets = Vec::with_capacity(total_objects);
+
+    let _ = write!(buf, "%PDF-1.4\n%????\n");
+
+    let catalog_id = 1;
+    let pages_id = 2;
+    let font_id = 3;
+    let first_page_id = 4;
+    let first_content_id = first_page_id + page_count;
+
+    offsets.push(buf.len());
+    let _ = write!(
+        buf,
+        "{} 0 obj\n<< /Type /Catalog /Pages {} 0 R >>\nendobj\n",
+        catalog_id, pages_id
+    );
+
+    let mut kids = String::new();
+    for i in 0..page_count {
+        let _ = write!(kids, "{} 0 R ", first_page_id + i);
+    }
+    offsets.push(buf.len());
+    let _ = write!(
+        buf,
+        "{} 0 obj\n<< /Type /Pages /Kids [{}] /Count {} >>\nendobj\n",
+        pages_id, kids, page_count
+    );
+
+    offsets.push(buf.len());
+    let _ = write!(
+        buf,
+        "{} 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n",
+        font_id
+    );
+
+    for i in 0..page_count {
+        let page_id = first_page_id + i;
+        let content_id = first_content_id + i;
+        offsets.push(buf.len());
+        let _ = write!(
+            buf,
+            "{} 0 obj\n<< /Type /Page /Parent {} 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 {} 0 R >> >> /Contents {} 0 R >>\nendobj\n",
+            page_id, pages_id, font_id, content_id
+        );
+    }
+
+    for (i, content) in pages.iter().enumerate() {
+        let content_id = first_content_id + i;
+        let mut stream = Vec::new();
+        let length = content.len() + 1;
+        let _ = write!(stream, "<< /Length {} >>\nstream\n", length);
+        stream.extend_from_slice(content);
+        stream.push(b'\n');
+        stream.extend_from_slice(b"endstream");
+        offsets.push(buf.len());
+        let _ = write!(buf, "{} 0 obj\n", content_id);
+        buf.extend_from_slice(&stream);
+        buf.extend_from_slice(b"\nendobj\n");
+    }
+
+    let xref_start = buf.len();
+    let _ = write!(buf, "xref\n0 {}\n", total_objects + 1);
+    buf.extend_from_slice(b"0000000000 65535 f \n");
+    for offset in offsets.iter().take(total_objects) {
+        let _ = write!(buf, "{:010} 00000 n \n", offset);
+    }
+    let _ = write!(
+        buf,
+        "trailer\n<< /Size {} /Root {} 0 R >>\nstartxref\n{}\n%%EOF\n",
+        total_objects + 1,
+        catalog_id,
+        xref_start
+    );
+
+    buf
+}
+
+fn pdf_escape(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for ch in text.chars() {
+        match ch {
+            '\\' => out.push_str("\\\\"),
+            '(' => out.push_str("\\("),
+            ')' => out.push_str("\\)"),
+            _ => out.push(ch),
+        }
+    }
+    out
+}
+
+fn pdf_text(buf: &mut Vec<u8>, x: f64, y: f64, size: f64, text: &str) {
+    let escaped = pdf_escape(text);
+    let _ = write!(
+        buf,
+        "BT /F1 {:.2} Tf 1 0 0 1 {:.3} {:.3} Tm ({}) Tj ET\n",
+        size, x, y, escaped
+    );
+}
+
+fn pdf_line(buf: &mut Vec<u8>, x1: f64, y1: f64, x2: f64, y2: f64) {
+    let _ = write!(buf, "{:.3} {:.3} m {:.3} {:.3} l S\n", x1, y1, x2, y2);
+}
+
+fn pdf_rect_fill_stroke(buf: &mut Vec<u8>, x: f64, y: f64, w: f64, h: f64) {
+    let _ = write!(buf, "{:.3} {:.3} {:.3} {:.3} re B\n", x, y, w, h);
+}
+
+fn pdf_set_fill_rgb(buf: &mut Vec<u8>, r: f64, g: f64, b: f64) {
+    let _ = write!(buf, "{:.3} {:.3} {:.3} rg\n", r, g, b);
+}
 fn is_standard_residue(res_name: &[u8]) -> bool {
     matches!(
         res_name,
