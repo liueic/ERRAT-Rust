@@ -8,24 +8,15 @@
 ## 项目结构
 ```
 ERRAT-Rust/
+  .github/
+  .gitignore
   Cargo.toml
   Cargo.lock
+  LICENSE
   README.md
   README.zh-CN.md
-  LICENSE
   src/
   tests/
-  examples/
-  data/
-    Hpyr004913.1-R65830.mRNA_relaxed_rank_001_alphafold2_ptm_model_5_seed_000.pdb
-  outputs/
-    job_run/
-      errat.logf
-      errat.ps
-  scripts/
-    run_sample.sh
-    bench.sh
-    compare_outputs.sh
 ```
 
 ## 编译
@@ -53,6 +44,13 @@ ERRAT_JOBS_PATH=/path/to/jobs \
 - `<job>/errat.logf`
 - `<job>/errat.ps`
 
+### 作业目录批处理模式
+并行处理多个作业目录。包含 `errat.pdb` 的子目录会被视为一个作业。
+
+```bash
+errat --jobs-dir /path/to/jobs --threads 8
+```
+
 ### 直接文件模式（CLI 工具）
 ```bash
 errat --input /path/to/input.pdb --out-dir /path/to/output --protein-id <ProteinID>
@@ -70,6 +68,22 @@ errat --input /path/to/input.pdb --out-dir /path/to/output
 说明：
 - `--input` 支持 `.pdb`、`.cif`、`.mmcif`。
 - 若省略 `--protein-id`，默认使用输入文件名（去掉扩展名）。
+
+### 直接文件批处理模式
+批量处理目录下所有 `.pdb`、`.cif`、`.mmcif` 文件。
+
+```bash
+errat --input-dir /path/to/pdbs --out-dir /path/to/output --threads 8
+```
+
+如需扫描子目录，请加 `--recursive`。
+
+### 可选内存映射（仅 PDB）
+使用 `--mmap` 通过内存映射读取 PDB。
+
+```bash
+errat --input /path/to/input.pdb --out-dir /path/to/output --mmap
+```
 
 ## 环境变量
 - `ERRAT_JOBS_PATH`：作业目录根路径，默认 `./outputs`。

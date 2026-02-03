@@ -1,6 +1,7 @@
 use std::fs::File;
 use std::io::{self, BufRead, BufReader, BufWriter, Read, Write};
 use std::path::PathBuf;
+use memmap2::MmapOptions;
 use rayon::prelude::*;
 
 const SIZE: usize = 250_000;
@@ -20,6 +21,7 @@ pub struct Config {
     pub base_path: PathBuf,
     pub input_pdb: Option<PathBuf>,
     pub output_dir: Option<PathBuf>,
+    pub use_mmap: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -75,10 +77,7 @@ pub fn run(config: Config) -> io::Result<()> {
     let psf = File::create(&paths.ps)?;
     let mut psw = BufWriter::new(psf);
 
-    let pdbf = File::open(&paths.pdb)?;
-    let mut pdb_reader = BufReader::new(pdbf);
-
-    let atom_data = parse_structure(&paths.pdb, &mut pdb_reader, &mut logw)?;
+    let atom_data = parse_structure(&paths.pdb, &mut logw, config.use_mmap)?;
     let stats = compute_errat(&atom_data, &mut logw)?;
 
     if stats.stat > 0.0 {
@@ -90,10 +89,10 @@ pub fn run(config: Config) -> io::Result<()> {
     Ok(())
 }
 
-fn parse_structure<R: BufRead, W: Write>(
+fn parse_structure<W: Write>(
     path: &PathBuf,
-    reader: &mut R,
     logw: &mut W,
+    use_mmap: bool,
 ) -> io::Result<AtomData> {
     let ext = path
         .extension()
@@ -101,10 +100,189 @@ fn parse_structure<R: BufRead, W: Write>(
         .unwrap_or("")
         .to_ascii_lowercase();
     if ext == "cif" || ext == "mmcif" {
-        parse_mmcif(reader, logw)
+        let pdbf = File::open(path)?;
+        let mut reader = BufReader::new(pdbf);
+        parse_mmcif(&mut reader, logw)
     } else {
-        parse_pdb(reader, logw)
+        if use_mmap {
+            parse_pdb_mmap(path, logw)
+        } else {
+            let pdbf = File::open(path)?;
+            let mut reader = BufReader::new(pdbf);
+            parse_pdb(&mut reader, logw)
+        }
     }
+}
+
+fn parse_pdb_mmap<W: Write>(path: &PathBuf, logw: &mut W) -> io::Result<AtomData> {
+    let file = File::open(path)?;
+    let mmap = unsafe { MmapOptions::new().map(&file)? };
+    parse_pdb_bytes(&mmap, logw)
+}
+
+fn parse_pdb_bytes<W: Write>(bytes: &[u8], logw: &mut W) -> io::Result<AtomData> {
+    let mut name = vec![0i32; SIZE + 2];
+    let mut bnam = vec![0i32; SIZE + 2];
+    let mut chain_id = vec![b' '; SIZE + 2];
+    let mut res_seq = vec![0i32; SIZE + 2];
+    let mut resnum = vec![0i32; SIZE + 2];
+    let mut xyz_x = vec![0.0f64; SIZE + 2];
+    let mut xyz_y = vec![0.0f64; SIZE + 2];
+    let mut xyz_z = vec![0.0f64; SIZE + 2];
+    let mut errat = vec![0.0f64; SIZE + 8];
+
+    let mut i: usize = 0;
+    let mut atmnum: usize = 0;
+    let mut kadd: i32 = 0;
+    let mut flag = false;
+    let mut flag2 = false;
+
+    let mut start = 0usize;
+    while start < bytes.len() && !flag2 {
+        let mut end = start;
+        while end < bytes.len() && bytes[end] != b'\n' {
+            end += 1;
+        }
+        let mut line = &bytes[start..end];
+        if line.ends_with(b"\r") {
+            line = &line[..line.len().saturating_sub(1)];
+        }
+        start = end + 1;
+
+        if line.len() < 6 {
+            continue;
+        }
+        if &line[..6] != b"ATOM  " {
+            continue;
+        }
+        if i + 1 > SIZE - 1 {
+            writeln!(
+                logw,
+                "ERROR: PDB WITH TOO MANY ATOMS. CUT OFF FURTHER INPUT."
+            )?;
+            break;
+        }
+        i += 1;
+        if line.len() < 54 {
+            i -= 1;
+            continue;
+        }
+
+        let name_temp = line[13];
+        name[i] = match name_temp {
+            b'C' => 1,
+            b'N' => 2,
+            b'O' => 3,
+            _ => 0,
+        };
+
+        if line.len() < 16 {
+            i -= 1;
+            continue;
+        }
+        let name_temp2 = &line[13..16];
+        bnam[i] = if name_temp2 == b"N  " || name_temp2 == b"C  " {
+            1
+        } else {
+            0
+        };
+
+        let alt_loc = line[16] as char;
+        let res_name = &line[17..20];
+        chain_id[i] = line[21];
+
+        let res_seq_temp = std::str::from_utf8(&line[22..26]).unwrap_or("");
+        let res_seq_val = res_seq_temp.trim().parse::<f64>().unwrap_or(0.0);
+        res_seq[i] = res_seq_val as i32;
+
+        let x_temp = std::str::from_utf8(&line[30..38]).unwrap_or("");
+        let y_temp = std::str::from_utf8(&line[38..46]).unwrap_or("");
+        let z_temp = std::str::from_utf8(&line[46..54]).unwrap_or("");
+        xyz_x[i] = x_temp.trim().parse::<f64>().unwrap_or(0.0);
+        xyz_y[i] = y_temp.trim().parse::<f64>().unwrap_or(0.0);
+        xyz_z[i] = z_temp.trim().parse::<f64>().unwrap_or(0.0);
+
+        if !(alt_loc == ' ' || alt_loc == 'A' || alt_loc == 'a' || alt_loc == 'P') {
+            writeln!(
+                logw,
+                "Reject 2' Conformation atom#\t{}\tchain\t{}",
+                i,
+                chain_id[i] as char
+            )?;
+            i -= 1;
+            flag = true;
+        }
+
+        if !is_standard_residue(res_name) {
+            i -= 1;
+            flag = true;
+            let res_name_str = std::str::from_utf8(res_name).unwrap_or("???");
+            writeln!(
+                logw,
+                "***Warning: Reject Nonstardard Residue - {}",
+                res_name_str
+            )?;
+        }
+
+        if i >= 2 && !flag && chain_id[i] != chain_id[i - 1] {
+            kadd += 1;
+            writeln!(logw, "INCREMENTING CHAIN (kadd) {}", kadd)?;
+        }
+
+        if !flag {
+            resnum[i] = res_seq[i] + (kadd * CHAINDIF);
+            atmnum = i;
+        }
+
+        if i >= 2
+            && !flag
+            && chain_id[i] == chain_id[i - 1]
+            && resnum[i] < resnum[i - 1]
+        {
+            writeln!(
+                logw,
+                "ERROR: RESNUM DECREASE. TERMINATE ANALYSIS{}\t{}",
+                resnum[i], resnum[i - 1]
+            )?;
+            flag2 = true;
+        }
+
+        if i > 2
+            && !flag
+            && chain_id[i] == chain_id[i - 1]
+            && resnum[i] != resnum[i - 1]
+            && (resnum[i] - resnum[i - 1]) > 1
+        {
+            writeln!(
+                logw,
+                "WARNING: Missing Residues{}>>>{}",
+                resnum[i - 1], resnum[i]
+            )?;
+        }
+
+        if !flag {
+            let idx = (resnum[i] + 4) as usize;
+            if idx >= errat.len() {
+                errat.resize(idx + 1, 0.0);
+            }
+            errat[idx] = 0.0;
+        }
+
+        flag = false;
+    }
+
+    Ok(AtomData {
+        atmnum,
+        name,
+        bnam,
+        chain_id,
+        res_seq,
+        resnum,
+        xyz_x,
+        xyz_y,
+        xyz_z,
+        errat,
+    })
 }
 
 fn resolve_paths(config: &Config) -> Paths {

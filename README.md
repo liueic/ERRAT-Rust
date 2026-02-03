@@ -8,24 +8,15 @@ A Rust reimplementation of the classic ERRAT algorithm for protein structure val
 ## Project structure
 ```
 ERRAT-Rust/
+  .github/
+  .gitignore
   Cargo.toml
   Cargo.lock
+  LICENSE
   README.md
   README.zh-CN.md
-  LICENSE
   src/
   tests/
-  examples/
-  data/
-    Hpyr004913.1-R65830.mRNA_relaxed_rank_001_alphafold2_ptm_model_5_seed_000.pdb
-  outputs/
-    job_run/
-      errat.logf
-      errat.ps
-  scripts/
-    run_sample.sh
-    bench.sh
-    compare_outputs.sh
 ```
 
 ## Build
@@ -53,6 +44,13 @@ Outputs:
 - `<job>/errat.logf`
 - `<job>/errat.ps`
 
+### Batch job-folder mode
+Process multiple job folders in parallel. Each subdirectory containing `errat.pdb` is treated as one job.
+
+```bash
+errat --jobs-dir /path/to/jobs --threads 8
+```
+
 ### Direct file mode (CLI tool)
 ```bash
 errat --input /path/to/input.pdb --out-dir /path/to/output --protein-id <ProteinID>
@@ -70,6 +68,22 @@ Outputs:
 Notes:
 - `--input` supports `.pdb`, `.cif`, and `.mmcif`.
 - If `--protein-id` is omitted, it defaults to the input filename without the extension.
+
+### Batch direct file mode
+Process all `.pdb`, `.cif`, and `.mmcif` files in a directory.
+
+```bash
+errat --input-dir /path/to/pdbs --out-dir /path/to/output --threads 8
+```
+
+Add `--recursive` to scan subdirectories.
+
+### Optional memory mapping (PDB only)
+Use `--mmap` to read PDB files via memory-mapped I/O.
+
+```bash
+errat --input /path/to/input.pdb --out-dir /path/to/output --mmap
+```
 
 ## Environment variable
 - `ERRAT_JOBS_PATH`: base directory containing job folders. Default: `./outputs`.
