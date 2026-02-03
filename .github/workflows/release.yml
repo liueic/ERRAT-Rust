@@ -26,12 +26,12 @@ jobs:
             bin_name: errat
             archive_ext: tar.gz
             use_cross: true
-          - os: macos-12
+          - os: macos-15-intel
             target: x86_64-apple-darwin
             bin_name: errat
             archive_ext: tar.gz
             use_cross: false
-          - os: macos-14
+          - os: macos-latest
             target: aarch64-apple-darwin
             bin_name: errat
             archive_ext: tar.gz
@@ -43,20 +43,25 @@ jobs:
             use_cross: false
     steps:
       - uses: actions/checkout@v4
+      
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
+      
       - name: Install cross
         if: ${{ matrix.use_cross }}
         uses: taiki-e/install-action@v2
         with:
           tool: cross
+      
       - name: Build (cross)
         if: ${{ matrix.use_cross }}
         run: cross build --release --target ${{ matrix.target }}
-      - name: Build
+      
+      - name: Build (native)
         if: ${{ !matrix.use_cross }}
         run: cargo build --release --target ${{ matrix.target }}
+      
       - name: Package (unix)
         if: ${{ matrix.archive_ext == 'tar.gz' }}
         shell: bash
@@ -72,19 +77,21 @@ jobs:
           cp "${bin}" "${stage}/"
           cp README.md README.zh-CN.md LICENSE "${stage}/"
           tar -czf "${dist}/${pkg}.tar.gz" "${stage}"
+      
       - name: Sha256 (unix)
         if: ${{ matrix.archive_ext == 'tar.gz' }}
         shell: bash
         run: |
           set -euo pipefail
           file="dist/errat-${GITHUB_REF_NAME}-${{ matrix.target }}.tar.gz"
-          python - <<'PY' "$file"
+          python3 - <<'PY' "$file"
           import hashlib, pathlib, sys
           p = pathlib.Path(sys.argv[1])
           h = hashlib.sha256(p.read_bytes()).hexdigest()
           out = p.with_suffix(p.suffix + ".sha256")
           out.write_text(f"{h}  {p.name}\n")
           PY
+      
       - name: Package (windows)
         if: ${{ matrix.archive_ext == 'zip' }}
         shell: pwsh
@@ -103,6 +110,7 @@ jobs:
           $hash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
           $sha = "$zip.sha256"
           "$hash  $(Split-Path $zip -Leaf)" | Out-File -Encoding ascii $sha
+      
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
@@ -116,8 +124,11 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           path: dist
+          pattern: errat-*
+          merge-multiple: true
+      
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
-          files: dist/**/*
+          files: dist/*
