@@ -38,6 +38,16 @@ fn main() {
         i += 1;
     }
 
+    if protein_id.is_none() {
+        if let Some(input_pdb) = input_pdb.as_ref() {
+            if let Some(stem) = input_pdb.file_stem().and_then(|s| s.to_str()) {
+                if !stem.is_empty() {
+                    protein_id = Some(stem.to_string());
+                }
+            }
+        }
+    }
+
     let config = if let (Some(input_pdb), Some(output_dir), Some(protein_id)) =
         (input_pdb, output_dir, protein_id)
     {

@@ -58,9 +58,17 @@ Outputs:
 errat --input /path/to/input.pdb --out-dir /path/to/output --protein-id <ProteinID>
 ```
 
+Minimal example (omit `--protein-id`):
+```bash
+errat --input /path/to/input.pdb --out-dir /path/to/output
+```
+
 Outputs:
-- `<out-dir>/errat.logf`
-- `<out-dir>/errat.ps`
+- `<out-dir>/<input-stem>.logf`
+- `<out-dir>/<input-stem>.ps`
+
+Notes:
+- If `--protein-id` is omitted, it defaults to the input filename without `.pdb`.
 
 ## Environment variable
 - `ERRAT_JOBS_PATH`: base directory containing job folders. Default: `./outputs`.

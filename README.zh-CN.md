@@ -58,9 +58,17 @@ ERRAT_JOBS_PATH=/path/to/jobs \
 errat --input /path/to/input.pdb --out-dir /path/to/output --protein-id <ProteinID>
 ```
 
+最简示例（省略 `--protein-id`）：
+```bash
+errat --input /path/to/input.pdb --out-dir /path/to/output
+```
+
 输出文件：
-- `<out-dir>/errat.logf`
-- `<out-dir>/errat.ps`
+- `<out-dir>/<input-stem>.logf`
+- `<out-dir>/<input-stem>.ps`
+
+说明：
+- 若省略 `--protein-id`，默认使用输入文件名（去掉 `.pdb`）。
 
 ## 环境变量
 - `ERRAT_JOBS_PATH`：作业目录根路径，默认 `./outputs`。

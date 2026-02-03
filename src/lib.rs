@@ -92,10 +92,15 @@ pub fn run(config: Config) -> io::Result<()> {
 
 fn resolve_paths(config: &Config) -> Paths {
     if let (Some(input_pdb), Some(output_dir)) = (&config.input_pdb, &config.output_dir) {
+        let base_name = input_pdb
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .filter(|s| !s.is_empty())
+            .unwrap_or("errat");
         let mut logf = output_dir.clone();
-        logf.push("errat.logf");
+        logf.push(format!("{base_name}.logf"));
         let mut ps = output_dir.clone();
-        ps.push("errat.ps");
+        ps.push(format!("{base_name}.ps"));
         return Paths {
             pdb: input_pdb.clone(),
             logf,
