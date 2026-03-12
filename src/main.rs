@@ -2,8 +2,8 @@ use std::env;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use rayon::prelude::*;
 use rayon::ThreadPoolBuilder;
+use rayon::prelude::*;
 
 fn print_usage() {
     eprintln!(

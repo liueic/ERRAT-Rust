@@ -24,6 +24,82 @@ ERRAT-Rust/
 cargo build --release
 ```
 
+## Python wheel
+这个仓库现在也可以构建成 Python wheel，发行名为 `errat-rs`，导入名为 `errat_rs`。
+
+在仓库根目录安装：
+
+```bash
+python3 -m pip install .
+```
+
+结构化分析示例：
+
+```python
+import errat_rs
+
+result = errat_rs.analyze(
+    "/path/to/input.pdb",
+    protein_id="MyProtein",
+)
+```
+
+导出经典 ERRAT 报告文件：
+
+```python
+report = errat_rs.write_report(
+    "/path/to/input.pdb",
+    "/path/to/output",
+    protein_id="MyProtein",
+    output_format="pdf",
+)
+```
+
+说明：
+- `analyze()` 返回结构化 Python dataclass，而不是只落地文件。
+- `write_report()` 保留原来的 `.logf` 和 `.ps` / `.pdf` 输出能力。
+- 如果两者都要，可以在一次调用里使用 `analyze_and_write()`。
+
+## 发布到 PyPI
+仓库里已经加入了专门的 GitHub Actions 工作流 `.github/workflows/pypi.yml`。
+它会构建 sdist 和多平台 wheel，并通过 Trusted Publishing 发布到 PyPI / TestPyPI。
+
+第一次发布前，你需要先做这几步：
+- 注册 PyPI 和 TestPyPI 账号。
+- 在 GitHub 仓库 Settings -> Environments 里创建 `pypi` 和 `testpypi` 两个 environment。
+- 给 `pypi` environment 配置 required reviewers，或者至少开启逐次人工批准。
+- 在 PyPI 项目设置里为 `errat-rs` 添加一个 pending Trusted Publisher。
+- GitHub owner 填 `liueic`，repository 填 `ERRAT-Rust`，workflow filename 填 `pypi.yml`，environment 填 `pypi`。
+- 在 TestPyPI 里重复一遍，environment 改成 `testpypi`。
+
+推荐发布流程：
+```bash
+# 1. 同时更新 Cargo.toml 和 pyproject.toml 的版本号
+
+# 2. 本地验证
+cargo test
+cargo check --features python
+python3 -m pip install . --force-reinstall
+
+# 3. 推送代码
+git push origin main
+
+# 4. 可选：在 GitHub Actions 里手动触发 workflow_dispatch，先发布到 TestPyPI
+
+# 5. 正式发布到 PyPI
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+这个工作流会强制检查：
+- `Cargo.toml` 和 `pyproject.toml` 的版本号必须一致。
+- Git tag `vX.Y.Z` 必须和包版本 `X.Y.Z` 一致。
+
+TestPyPI 发布后，可以这样安装验证：
+```bash
+python3 -m pip install --index-url https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple errat-rs
+```
+
 ## 运行
 支持作业目录模式与直接文件模式。
 

@@ -1,0 +1,32 @@
+[build-system]
+requires = ["maturin>=1.12,<2"]
+build-backend = "maturin"
+
+[project]
+name = "errat-rs"
+version = "0.1.0"
+description = "Python bindings for the ERRAT-Rust protein structure validation tool"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { file = "LICENSE" }
+keywords = ["bioinformatics", "protein", "structure-validation", "errat", "rust"]
+classifiers = [
+    "License :: OSI Approved :: MIT License",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Bio-Informatics",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Rust",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Operating System :: OS Independent",
+]
+
+[project.urls]
+Homepage = "https://github.com/liueic/ERRAT-Rust"
+Repository = "https://github.com/liueic/ERRAT-Rust"
+Issues = "https://github.com/liueic/ERRAT-Rust/issues"
+
+[tool.maturin]
+python-source = "python"
+module-name = "errat_rs._native"
+features = ["python"]

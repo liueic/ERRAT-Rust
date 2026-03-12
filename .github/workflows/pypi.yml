@@ -1,0 +1,152 @@
+name: pypi
+
+on:
+  workflow_dispatch:
+    inputs:
+      repository:
+        description: Publish target repository
+        type: choice
+        required: true
+        default: testpypi
+        options:
+          - testpypi
+          - pypi
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  validate-version:
+    runs-on: ubuntu-latest
+    env:
+      REF_NAME: ${{ github.ref_name }}
+      REF_TYPE: ${{ github.ref_type }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Ensure Cargo, pyproject, and tag versions match
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cargo_version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)"
+          pyproject_version="$(sed -n 's/^version = "\(.*\)"/\1/p' pyproject.toml | head -n 1)"
+
+          if [ -z "${cargo_version}" ] || [ -z "${pyproject_version}" ]; then
+            echo "Failed to read package versions."
+            exit 1
+          fi
+
+          if [ "${cargo_version}" != "${pyproject_version}" ]; then
+            echo "Cargo.toml version (${cargo_version}) does not match pyproject.toml version (${pyproject_version})."
+            exit 1
+          fi
+
+          if [ "${REF_TYPE}" = "tag" ]; then
+            tag_version="${REF_NAME#v}"
+            if [ "${tag_version}" != "${pyproject_version}" ]; then
+              echo "Tag version (${tag_version}) does not match project version (${pyproject_version})."
+              exit 1
+            fi
+          fi
+
+  build-wheels:
+    name: wheel-${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    needs: validate-version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            manylinux: "2014"
+          - os: macos-15-intel
+            target: x86_64-apple-darwin
+          - os: macos-latest
+            target: aarch64-apple-darwin
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.9"
+      - name: Build wheel (Linux)
+        if: runner.os == 'Linux'
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          manylinux: ${{ matrix.manylinux }}
+          args: --release --out dist
+      - name: Build wheel (non-Linux)
+        if: runner.os != 'Linux'
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          args: --release --out dist
+      - name: Upload wheel artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheels-${{ matrix.target }}
+          path: dist/*
+
+  build-sdist:
+    runs-on: ubuntu-latest
+    needs: validate-version
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build source distribution
+        uses: PyO3/maturin-action@v1
+        with:
+          command: sdist
+          args: --out dist
+      - name: Upload sdist artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sdist
+          path: dist/*
+
+  publish-testpypi:
+    runs-on: ubuntu-latest
+    needs:
+      - build-wheels
+      - build-sdist
+    if: github.event_name == 'workflow_dispatch' && inputs.repository == 'testpypi'
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/project/errat-rs/
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: "*"
+          merge-multiple: true
+      - name: Publish distribution to TestPyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+
+  publish-pypi:
+    runs-on: ubuntu-latest
+    needs:
+      - build-wheels
+      - build-sdist
+    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.repository == 'pypi')
+    environment:
+      name: pypi
+      url: https://pypi.org/project/errat-rs/
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: "*"
+          merge-multiple: true
+      - name: Publish distribution to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1

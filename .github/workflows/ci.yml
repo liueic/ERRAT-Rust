@@ -19,3 +19,20 @@ jobs:
         run: cargo build --release
       - name: Test
         run: cargo test --release
+
+  python-package-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.9"
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install build tool
+        run: python -m pip install maturin
+      - name: Check Python feature
+        run: cargo check --features python
+      - name: Build and install wheel
+        run: python -m pip install . --force-reinstall
+      - name: Import package
+        run: python -c "import errat_rs"

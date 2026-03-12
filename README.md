@@ -24,6 +24,82 @@ ERRAT-Rust/
 cargo build --release
 ```
 
+## Python wheel
+This crate can also be built as a Python wheel named `errat-rs` and imported with `import errat_rs`.
+
+Install from the repository root:
+
+```bash
+python3 -m pip install .
+```
+
+Analyze a structure and get structured results:
+
+```python
+import errat_rs
+
+result = errat_rs.analyze(
+    "/path/to/input.pdb",
+    protein_id="MyProtein",
+)
+```
+
+Write the classic ERRAT report files:
+
+```python
+report = errat_rs.write_report(
+    "/path/to/input.pdb",
+    "/path/to/output",
+    protein_id="MyProtein",
+    output_format="pdf",
+)
+```
+
+Notes:
+- `analyze()` returns structured Python dataclasses instead of only writing files.
+- `write_report()` keeps the original `.logf` and `.ps` / `.pdf` outputs.
+- `analyze_and_write()` is available when you want both in one call.
+
+## Publish to PyPI
+This repository includes a dedicated GitHub Actions workflow at `.github/workflows/pypi.yml`.
+It builds an sdist plus platform wheels and publishes them with Trusted Publishing.
+
+Before the first release:
+- Create accounts on PyPI and TestPyPI.
+- In GitHub repository settings, create `pypi` and `testpypi` environments.
+- Configure required reviewers or manual approval for the `pypi` environment.
+- In the PyPI project settings, add a pending Trusted Publisher for `errat-rs`.
+- Use GitHub owner `liueic`, repository `ERRAT-Rust`, workflow filename `pypi.yml`, and environment `pypi`.
+- Repeat the same setup on TestPyPI with environment `testpypi`.
+
+Recommended release flow:
+```bash
+# 1. Bump versions in Cargo.toml and pyproject.toml
+
+# 2. Verify locally
+cargo test
+cargo check --features python
+python3 -m pip install . --force-reinstall
+
+# 3. Push changes
+git push origin main
+
+# 4. Optional: publish to TestPyPI from GitHub Actions workflow_dispatch
+
+# 5. Publish to PyPI by pushing a version tag
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+The workflow enforces that:
+- `Cargo.toml` and `pyproject.toml` use the same version.
+- Tag `vX.Y.Z` matches the package version `X.Y.Z`.
+
+After TestPyPI release, install from TestPyPI with:
+```bash
+python3 -m pip install --index-url https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple errat-rs
+```
+
 ## Run
 The program can run in job-folder mode or direct file mode.
 

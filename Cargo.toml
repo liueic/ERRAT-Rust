@@ -2,7 +2,20 @@
 name = "errat"
 version = "0.1.0"
 edition = "2024"
+description = "Rust implementation of the ERRAT protein structure validation algorithm"
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/liueic/ERRAT-Rust"
+keywords = ["bioinformatics", "protein", "validation", "errat"]
+categories = ["science"]
+
+[lib]
+crate-type = ["rlib", "cdylib"]
+
+[features]
+python = ["dep:pyo3"]
 
 [dependencies]
 memmap2 = "0.9"
+pyo3 = { version = "0.28.2", optional = true, features = ["abi3-py39"] }
 rayon = "1.10"
