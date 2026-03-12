@@ -8,14 +8,14 @@ FrameStatus = Literal["ok", "warning95", "warning99"]
 OutputFormat = Literal["ps", "pdf"]
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class ChainSummary:
     chain_id: str
     start_residue: int
     end_residue: int
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class FrameScore:
     chain_id: str
     center_residue: int
@@ -23,14 +23,14 @@ class FrameScore:
     status: FrameStatus
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class ReportPaths:
     log_path: Path
     plot_path: Path
     output_format: OutputFormat
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class AnalysisResult:
     protein_id: str
     input_path: Path
